@@ -2,6 +2,10 @@ qt_add_executable(app
     main.cpp
 )
 
+set_source_files_properties(Theme.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE
+)
+
 qt_add_qml_module(app
     URI ClearTone
     SOURCES
@@ -14,6 +18,7 @@ qt_add_qml_module(app
         Theme.qml
         TitleBar.qml
         CaptionButton.qml
+        LoginWindow.qml
 )
 
 target_link_libraries(app

@@ -1,8 +1,10 @@
 import QtQuick
 
+import core
+
+// @disable-check M300
 FramelessWindow {
     id: window
-
     width: 1000
     height: 680
     minimumWidth: 480
@@ -38,5 +40,9 @@ FramelessWindow {
         anchors.top: titleBar.bottom
         anchors.bottom: parent.bottom
         color: "#0B0C10"
+        MouseArea {
+            anchors.fill: parent
+            onClicked: Login.loggedOut()
+        }
     }
 }

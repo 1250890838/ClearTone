@@ -24,11 +24,8 @@
 
 namespace {
 
-// Win11 之前这个 attribute 的编号是 19，之后是 20。
 constexpr DWORD kDwmwaUseImmersiveDarkModeBefore20H1 = 19;
 
-// 未公开的两个消息，系统用它们画默认标题栏 / 边框。客户区已经盖满整个窗口，
-// 放行的话偶尔会闪一下系统标题栏，所以直接吞掉。
 constexpr UINT kWMNCUAHDrawCaption = 0x00AE;
 constexpr UINT kWMNCUAHDrawFrame = 0x00AF;
 
@@ -298,6 +295,7 @@ static QPointF toLocalDip(QWindow *window, HWND hwnd, const QPoint &screenPos)
 
     POINT origin{0, 0};
     ClientToScreen(hwnd, &origin);
+
     return QPointF((screenPos.x() - origin.x) / dpr, (screenPos.y() - origin.y) / dpr);
 }
 
@@ -377,15 +375,13 @@ WindowButton *FramelessWindow::buttonAt(const QPoint &screenPos, int *hitCodeOut
         if (!button->isVisible() || !button->isEnabled())
             continue;
         if (sceneRectOf(button).contains(pos))
-            found = button;   // 后加入的在上面，让后面的赢
+            found = button;
     }
 
     if (found && hitCodeOut)
         *hitCodeOut = hitCodeForRole(found->role());
     return found;
 }
-
-// -------------------------------------------------------------------- 按钮状态
 
 void FramelessWindow::updateHoverState(const QPoint &screenPos)
 {
@@ -401,13 +397,10 @@ void FramelessWindow::updateHoverState(const QPoint &screenPos)
         const bool inside = button->isVisible() && button->isEnabled()
                             && sceneRectOf(button).contains(pos);
         button->setHovered(inside);
-        // 按着不放的时候拖出按钮范围，按钮要回弹；拖回来又亮起来。
         if (button == m_pressedButton && button->isPressed() != inside)
             button->setPressed(inside);
     }
 
-    // 鼠标在窗口外面松手（或者被 Snap Layouts 浮出控件接管），
-    // 我们收不到 WM_NCLBUTTONUP，这里兜底把按下态清掉。
     if (m_pressedButton && !m_pressedButton->isHovered())
         setPressedButton(nullptr);
 }
@@ -480,7 +473,6 @@ bool FramelessWindow::nativeEvent(const QByteArray &eventType, void *message, qi
         POINT cursor{};
         GetCursorPos(&cursor);
         updateHoverState(QPoint(cursor.x, cursor.y));
-        // 鼠标离开非客户区时让系统通知我们一次，否则高亮会一直留着。
         TRACKMOUSEEVENT tme{};
         tme.cbSize = sizeof(TRACKMOUSEEVENT);
         tme.dwFlags = TME_NONCLIENT | TME_LEAVE;
@@ -493,9 +485,6 @@ bool FramelessWindow::nativeEvent(const QByteArray &eventType, void *message, qi
         clearHoverState();
         break;
 
-    // 这三个按钮的按下/抬起必须我们自己做 —— 实测过：把消息放行给
-    // DefWindowProc，点下去毫无反应。HTMAXBUTTON 只换来「悬停弹 Snap Layouts」
-    // 这一件事，不包含点击动作；这点跟 HTCAPTION 不一样，那个是整套拖拽都送。
     case WM_NCLBUTTONDOWN: {
         if (isCaptionHitCode(int(msg->wParam))) {
             POINT cursor{};
@@ -560,8 +549,6 @@ bool FramelessWindow::nativeEvent(const QByteArray &eventType, void *message, qi
 }
 
 #endif // Q_OS_WIN
-
-// ------------------------------------------------------------- 附加属性实现
 
 FramelessWindowAttached::FramelessWindowAttached(QObject *parent)
     : QObject(parent)
