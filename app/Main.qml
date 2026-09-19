@@ -1,17 +1,42 @@
 import QtQuick
-import QtQuick.Controls
 
-import Core
+FramelessWindow {
+    id: window
 
-Window {
-    width: 640
-    height: 480
+    width: 1000
+    height: 680
+    minimumWidth: 480
+    minimumHeight: 320
     visible: true
-    title: qsTr("Hello World")
+    title: qsTr("ClearTone")
+    color: "#0B0C10"
 
-    Button{
-        width: 40
-        height: 40
-        onClicked: Test.song()
+    TitleBar {
+        id: titleBar
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        title: window.title
+
+        CaptionButton {
+            role: WindowButton.Minimize
+            height: parent.height
+        }
+        CaptionButton {
+            role: WindowButton.Maximize
+            height: parent.height
+        }
+        CaptionButton {
+            role: WindowButton.Close
+            height: parent.height
+        }
+    }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: titleBar.bottom
+        anchors.bottom: parent.bottom
+        color: "#0B0C10"
     }
 }
