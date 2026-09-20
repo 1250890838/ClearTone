@@ -134,7 +134,6 @@ struct HttpReply::Private
     void finish();
 };
 
-// ——— HttpReply ————————————————————————————————————————————————
 
 HttpReply::HttpReply(const HttpRequest &request, HttpClient *client)
     : QObject(client)
@@ -144,16 +143,12 @@ HttpReply::HttpReply(const HttpRequest &request, HttpClient *client)
     d->request = request;
     d->client = client;
 
-    // 延后到事件循环再开跑：保证调用方一定来得及 connect，
-    // 即使是「baseUrl 没设」这种立刻失败的请求也不会把信号发进空里。
     QTimer::singleShot(0, this, [this] { start(); });
 }
 
 HttpReply::~HttpReply()
 {
     if (d->networkReply) {
-        // 必须先断开再 abort()：abort() 会同步发出 finished()，
-        // 不断开就会在析构过程中回调到自己的处理函数里。
         disconnect(d->networkReply, nullptr, this, nullptr);
         if (d->networkReply->isRunning())
             d->networkReply->abort();
@@ -350,7 +345,6 @@ void HttpReply::Private::startAttempt()
     response = HttpResponse{};
     elapsed.start();
 
-    // 重试时丢弃上一次的临时文件重来
     delete saveFile;
     saveFile = nullptr;
     savedPath.clear();
@@ -385,7 +379,6 @@ void HttpReply::Private::startAttempt()
 
     const QVariantMap headers = q->mergedHeadersForRequest();
     for (auto it = headers.constBegin(); it != headers.constEnd(); ++it) {
-        // Content-Type 交给 QNetworkRequest 自己管，避免两种设置方式打架
         if (it.key().compare(QLatin1String("Content-Type"), Qt::CaseInsensitive) == 0)
             continue;
         networkRequest.setRawHeader(it.key().toUtf8(), it.value().toString().toUtf8());
@@ -429,7 +422,7 @@ void HttpReply::Private::startAttempt()
         multiPart->append(filePart);
 
         reply = manager->post(networkRequest, multiPart);
-        multiPart->setParent(reply);   // QNAM 不接管 multiPart，挂到 reply 上一起销毁
+        multiPart->setParent(reply);
     } else {
         switch (request.method) {
         case HttpRequest::Method::Get:
@@ -499,7 +492,7 @@ void HttpReply::Private::onNetworkReplyFinished()
         return;
     }
 
-    drainToSaveFile();   // 把尾巴收干净（下载时写文件，其它情况读取留在下面）
+    drainToSaveFile();
 
     response.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     response.headers = reply->rawHeaderPairs();
@@ -519,8 +512,6 @@ void HttpReply::Private::onNetworkReplyFinished()
         response.error.kind = NetworkError::Kind::Cancelled;
         response.error.message = nativeMessage;
     } else if (response.httpStatus >= 400) {
-        // Qt 把 4xx/5xx 也报成 reply error，这里统一归到 HttpStatus，
-        // 不要被 QNetworkReply::error() 的表面枚举带偏。
         response.error.kind = NetworkError::Kind::HttpStatus;
         response.error.httpStatus = response.httpStatus;
         response.error.message = nativeMessage;
@@ -530,7 +521,6 @@ void HttpReply::Private::onNetworkReplyFinished()
     }
 
     if (response.error.isValid()) {
-        // 后端返回的错误体里往往有更有用的 message / code，覆盖掉 Qt 的通用描述
         fillFromErrorBody(response.error, response.rawBody);
     } else if (!response.rawBody.isEmpty()
                && response.contentType().contains(QLatin1String("json"), Qt::CaseInsensitive)
@@ -563,7 +553,6 @@ bool HttpReply::Private::shouldRetry() const
     const NetworkError::Kind kind = response.error.kind;
     if (isRetriableKind(kind))
         return true;
-    // 服务端临时故障，换个时机可能就通了
     if (kind == NetworkError::Kind::HttpStatus)
         return response.httpStatus == 429 || response.httpStatus >= 500;
 
@@ -576,7 +565,7 @@ void HttpReply::Private::scheduleRetry()
     for (int i = 1; i < attempt && delay < kMaxBackoffMs; ++i)
         delay *= 2;
     delay = qMin(delay, kMaxBackoffMs);
-    delay += QRandomGenerator::global()->bounded(qMax(1, delay / 4));   // 抖动，避免同时重试
+    delay += QRandomGenerator::global()->bounded(qMax(1, delay / 4));
 
     if (!retryTimer) {
         retryTimer = new QTimer(q);
@@ -608,7 +597,7 @@ void HttpReply::Private::finish()
                 response.error.message = reason;
             }
         } else {
-            saveFile->cancelWriting();   // 失败就别留半个文件
+            saveFile->cancelWriting();
         }
         delete saveFile;
         saveFile = nullptr;
@@ -617,7 +606,6 @@ void HttpReply::Private::finish()
     if (elapsed.isValid())
         response.elapsedMs = elapsed.elapsed();
 
-    // 槽函数可能把本对象删掉，每次 emit 之后都要重新确认
     QPointer<HttpReply> guard(q);
 
     if (response.isSuccess())

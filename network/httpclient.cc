@@ -34,9 +34,6 @@ HttpClient::HttpClient(QObject *parent)
 
 HttpClient::~HttpClient()
 {
-    // 必须先把还活着的 reply 删掉。QObject 的子对象是按添加顺序析构的，
-    // 而 QNAM 直到第一次请求才被创建；不在这里处理的话，基类析构会先删掉 QNAM，
-    // 之后才析构的 HttpReply 就会碰到已经不存在的 QNetworkReply。
     const QList<HttpReply *> replies = findChildren<HttpReply *>();
     for (HttpReply *reply : replies)
         delete reply;
@@ -44,8 +41,6 @@ HttpClient::~HttpClient()
     delete d;
     d = nullptr;
 }
-
-// ——— 配置 ————————————————————————————————————————————————
 
 void HttpClient::setBaseUrl(const QUrl &baseUrl)
 {
@@ -102,8 +97,6 @@ void HttpClient::clearHeaderProvider()
     d->providerHasContext = false;
 }
 
-// ——— 内部 ————————————————————————————————————————————————
-
 QUrl HttpClient::buildUrl(const HttpRequest &request) const
 {
     const QString path = request.path;
@@ -114,8 +107,6 @@ QUrl HttpClient::buildUrl(const HttpRequest &request) const
     if (absolute) {
         url = QUrl(path);
     } else {
-        // 不能用 QUrl::resolved()：base 是 https://host/v1 时，resolved("/users")
-        // 会得到 https://host/users，把 /v1 悄悄吃掉。这里手工拼路径。
         url = d->baseUrl;
 
         QString basePath = url.path();
@@ -133,7 +124,7 @@ QUrl HttpClient::buildUrl(const HttpRequest &request) const
     }
 
     if (!request.query.isEmpty()) {
-        QUrlQuery query(url.query());   // 保留 baseUrl 自带的查询参数
+        QUrlQuery query(url.query());
         for (auto it = request.query.constBegin(); it != request.query.constEnd(); ++it)
             query.addQueryItem(it.key(), it.value().toString());
         url.setQuery(query);
@@ -146,8 +137,6 @@ QVariantMap HttpClient::mergedHeaders(const HttpRequest &request) const
 {
     QVariantMap merged = d->defaultHeaders;
 
-    // 注入点：每次请求前现算，token 刷新后立刻生效。
-    // context 已被销毁就跳过，避免调用方 lambda 里捕获的 this 悬垂。
     const bool providerUsable = d->headerProvider
                                 && (!d->providerHasContext || !d->providerContext.isNull());
     if (providerUsable) {
@@ -156,7 +145,6 @@ QVariantMap HttpClient::mergedHeaders(const HttpRequest &request) const
             merged.insert(it.key(), it.value());
     }
 
-    // 单次请求显式指定的头优先级最高
     for (auto it = request.headers.constBegin(); it != request.headers.constEnd(); ++it)
         merged.insert(it.key(), it.value());
 
@@ -182,7 +170,6 @@ int HttpClient::backoffMs() const
 QNetworkAccessManager *HttpClient::ensureNetworkAccessManager()
 {
     if (!d->nam) {
-        // 不装自定义 cookie jar：QNAM 默认那个已经会收 Set-Cookie 并在后续请求带上。
         d->nam = new QNetworkAccessManager(this);
     }
     return d->nam;
@@ -198,8 +185,6 @@ QNetworkCookieJar *HttpClient::cookieJar() const
     return d->nam ? d->nam->cookieJar() : nullptr;
 }
 
-// ——— 请求 ————————————————————————————————————————————————
-
 HttpReply *HttpClient::send(const HttpRequest &request)
 {
     Q_ASSERT(thread() == QThread::currentThread());
@@ -212,7 +197,7 @@ HttpReply *HttpClient::get(const QString &path, const QVariantMap &query)
     request.method = HttpRequest::Method::Get;
     request.path = path;
     request.query = query;
-    request.retryable = true;   // GET 幂等，重试安全
+    request.retryable = true;
     return send(request);
 }
 
@@ -231,7 +216,7 @@ HttpReply *HttpClient::post(const QString &path, const QJsonObject &body)
     request.method = HttpRequest::Method::Post;
     request.path = path;
     request.setJsonBody(body);
-    request.retryable = false;   // POST 默认不重试，避免重复提交
+    request.retryable = false;
     return send(request);
 }
 
@@ -252,7 +237,7 @@ HttpReply *HttpClient::put(const QString &path, const QJsonObject &body)
     request.method = HttpRequest::Method::Put;
     request.path = path;
     request.setJsonBody(body);
-    request.retryable = true;    // PUT 幂等
+    request.retryable = true;
     return send(request);
 }
 
@@ -272,11 +257,10 @@ HttpReply *HttpClient::del(const QString &path, const QVariantMap &query)
     request.method = HttpRequest::Method::Delete;
     request.path = path;
     request.query = query;
-    request.retryable = true;    // DELETE 幂等
+    request.retryable = true;
     return send(request);
 }
 
-// ——— 文件传输 ————————————————————————————————————————————————
 
 HttpReply *HttpClient::upload(const QString &path, const QString &localFilePath,
                               const QString &fieldName, const QVariantMap &extraFields)
@@ -287,7 +271,7 @@ HttpReply *HttpClient::upload(const QString &path, const QString &localFilePath,
     request.uploadFilePath = localFilePath;
     request.uploadFieldName = fieldName.isEmpty() ? QStringLiteral("file") : fieldName;
     request.uploadFields = extraFields;
-    request.retryable = false;   // multipart 里的 QFile 是一次性消费的，不能重放
+    request.retryable = false;
     return send(request);
 }
 
@@ -299,6 +283,6 @@ HttpReply *HttpClient::download(const QString &path, const QString &saveToPath,
     request.path = path;
     request.query = query;
     request.saveToPath = saveToPath;
-    request.retryable = true;    // 重试会重开 .part 文件，从头写
+    request.retryable = true;
     return send(request);
 }
