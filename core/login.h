@@ -3,8 +3,11 @@
 
 #include <QObject>
 #include <QQmlEngine>
+#include <QString>
 
 #include "core_global.h"
+
+class HttpClient;
 
 class CORE_EXPORT Login : public QObject
 {
@@ -20,6 +23,10 @@ signals:
     void loginSucceeded();
     void loggedOut();
     void loginFailed();
+
+private:
+    HttpClient *m_http = nullptr;
+    QString m_token;
 };
 
 #endif // LOGIN_H
