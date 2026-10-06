@@ -424,6 +424,8 @@ void FramelessWindow::setPressedButton(WindowButton *button)
         m_pressedButton->setPressed(true);
 }
 
+#endif // Q_OS_WIN
+
 bool FramelessWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
 {
 #ifdef Q_OS_WIN
@@ -547,8 +549,6 @@ bool FramelessWindow::nativeEvent(const QByteArray &eventType, void *message, qi
 #endif
     return QQuickWindow::nativeEvent(eventType, message, result);
 }
-
-#endif // Q_OS_WIN
 
 FramelessWindowAttached::FramelessWindowAttached(QObject *parent)
     : QObject(parent)
