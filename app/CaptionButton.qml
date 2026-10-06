@@ -15,7 +15,7 @@ WindowButton {
     property color pressedColor: "#21242B"
     property color closeHoverColor: "#C42B1C"
     property color closePressedColor: "#A5261A"
-    property string glyphFont: "Segoe Fluent Icons"
+    property string glyphFont: Qt.platform.os === "windows" ? "Segoe Fluent Icons" : ""
     property int glyphPixelSize: 10
 
     property bool autoAction: true
@@ -32,13 +32,24 @@ WindowButton {
     }
 
     readonly property string _glyph: {
+        if (Qt.platform.os === "windows") {
+            switch (role) {
+            case WindowButton.Minimize:
+                return "\uE921";
+            case WindowButton.Maximize:
+                return _zoomed ? "\uE923" : "\uE922";
+            case WindowButton.Close:
+                return "\uE8BB";
+            }
+            return "";
+        }
         switch (role) {
         case WindowButton.Minimize:
-            return "\uE921";
+            return "\u2013";
         case WindowButton.Maximize:
-            return _zoomed ? "\uE923" : "\uE922";
+            return _zoomed ? "\u2750" : "\u25A2";
         case WindowButton.Close:
-            return "\uE8BB";
+            return "\u2715";
         }
         return "";
     }

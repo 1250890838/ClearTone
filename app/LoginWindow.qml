@@ -10,10 +10,12 @@ FramelessWindow {
     systemMenuEnabled: false
     snapLayoutsEnabled: false
     resizeEnabled: false
+    color: Theme.frameRadius > 0 ? "transparent" : "white"
 
     Rectangle {
         id: container
         anchors.fill: parent
+        radius: Theme.frameRadius
         color: Theme.primaryBackground
         MouseArea {
             anchors.fill: parent

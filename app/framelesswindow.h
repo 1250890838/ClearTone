@@ -70,6 +70,7 @@ signals:
 protected:
     bool event(QEvent *event) override;
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     struct HitRegion
@@ -87,6 +88,7 @@ private:
     void clearHoverState();
     void setPressedButton(WindowButton *button);
     qreal effectiveResizeBorderWidth();
+    void updateWindowCursor(const QPointF &pos);
 
     void syncMaximizedState();
 
@@ -104,6 +106,12 @@ private:
 
     QPointer<WindowButton> m_pressedButton;
     QPoint m_lastMousePos;
+
+    QPointF m_pressPos;
+    Qt::Edges m_resizeEdges{};
+    bool m_moveArmed = false;
+    bool m_resizeArmed = false;
+    bool m_interactionStarted = false;
 
     void *m_hwnd = nullptr;
 };

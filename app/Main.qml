@@ -1,5 +1,4 @@
 import QtQuick
-
 import core
 
 // @disable-check M300
@@ -11,7 +10,8 @@ FramelessWindow {
     minimumHeight: 320
     visible: true
     title: qsTr("ClearTone")
-    color: "#0B0C10"
+    // Linux：窗口本体透明，由标题栏 + 内容区自绘圆角；Windows：DWM 负责圆角
+    color: Theme.frameRadius > 0 && !window.maximized ? "transparent" : "#0B0C10"
 
     TitleBar {
         id: titleBar
@@ -19,6 +19,7 @@ FramelessWindow {
         anchors.right: parent.right
         anchors.top: parent.top
         title: window.title
+        cornerRadius: !window.maximized ? Theme.frameRadius : 0
 
         CaptionButton {
             role: WindowButton.Minimize
@@ -35,11 +36,23 @@ FramelessWindow {
     }
 
     Rectangle {
+        id: content
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: titleBar.bottom
         anchors.bottom: parent.bottom
+        radius: !window.maximized ? Theme.frameRadius : 0
         color: "#0B0C10"
+
+        Rectangle {
+            visible: content.radius > 0
+            anchors.left: content.left
+            anchors.right: content.right
+            anchors.top: content.top
+            height: content.height / 2
+            color: content.color
+        }
+
         MouseArea {
             anchors.fill: parent
             onClicked: Login.loggedOut()

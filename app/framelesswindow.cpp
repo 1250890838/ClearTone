@@ -2,6 +2,8 @@
 #include "windowbutton.h"
 
 #include <QEvent>
+#include <QHoverEvent>
+#include <QMouseEvent>
 #include <QQuickItem>
 #include <QTimer>
 #include <QtQml/qqml.h>
@@ -19,6 +21,79 @@
 #  include <windowsx.h>
 #  include <dwmapi.h>
 #endif
+
+namespace {
+
+QObject *attachedOf(const QQuickItem *item)
+{
+    return qmlAttachedPropertiesObject<FramelessWindow>(item, false);
+}
+
+bool flagOf(const QQuickItem *item, const char *name)
+{
+    const QObject *attached = attachedOf(item);
+    return attached && attached->property(name).toBool();
+}
+
+QRectF sceneRectOf(const QQuickItem *item)
+{
+    return QRectF(item->mapToScene(QPointF(0, 0)), item->size());
+}
+
+struct PointClassification
+{
+    bool overButton = false;
+    bool overClient = false;
+    bool overDrag = false;
+};
+
+PointClassification classifyPoint(QQuickItem *root, const QPointF &scenePos)
+{
+    PointClassification out;
+    if (!root)
+        return out;
+
+    QList<QQuickItem *> stack{root};
+    while (!stack.isEmpty()) {
+        QQuickItem *item = stack.takeLast();
+
+        if (!item->isVisible() || !item->isEnabled())
+            continue;
+
+        if (sceneRectOf(item).contains(scenePos)) {
+            if (qobject_cast<WindowButton *>(item))
+                out.overButton = true;
+            else if (flagOf(item, "clientArea"))
+                out.overClient = true;
+            else if (flagOf(item, "dragRegion"))
+                out.overDrag = true;
+        }
+
+        const QList<QQuickItem *> children = item->childItems();
+        for (QQuickItem *child : children)
+            stack.append(child);
+    }
+    return out;
+}
+
+Qt::Edges resizeEdgesAt(const QPointF &pos, const QSizeF &size, qreal border)
+{
+    if (border <= 0)
+        return {};
+
+    Qt::Edges edges;
+    if (pos.x() < border)
+        edges |= Qt::LeftEdge;
+    if (pos.x() >= size.width() - border)
+        edges |= Qt::RightEdge;
+    if (pos.y() < border)
+        edges |= Qt::TopEdge;
+    if (pos.y() >= size.height() - border)
+        edges |= Qt::BottomEdge;
+    return edges;
+}
+
+} // namespace
 
 #ifdef Q_OS_WIN
 
@@ -47,22 +122,6 @@ int hitCodeForRole(WindowButton::Role role)
     return HTCLIENT;
 }
 
-QObject *attachedOf(const QQuickItem *item)
-{
-    return qmlAttachedPropertiesObject<FramelessWindow>(item, false);
-}
-
-bool flagOf(const QQuickItem *item, const char *name)
-{
-    const QObject *attached = attachedOf(item);
-    return attached && attached->property(name).toBool();
-}
-
-QRectF sceneRectOf(const QQuickItem *item)
-{
-    return QRectF(item->mapToScene(QPointF(0, 0)), item->size());
-}
-
 } // namespace
 #endif // Q_OS_WIN
 
@@ -72,6 +131,9 @@ FramelessWindow::FramelessWindow(QWindow *parent)
     setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowSystemMenuHint
              | Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint
              | Qt::WindowCloseButtonHint);
+
+    installEventFilter(this);
+    connect(this, &QWindow::windowStateChanged, this, &FramelessWindow::syncMaximizedState);
 
 #ifdef Q_OS_WIN
     connect(this, &QWindow::screenChanged, this, [this] { applyDwmAttributes(); });
@@ -198,6 +260,153 @@ bool FramelessWindow::event(QEvent *event)
     return result;
 }
 
+qreal FramelessWindow::effectiveResizeBorderWidth()
+{
+    if (m_resizeBorderWidth >= 0)
+        return m_resizeBorderWidth;
+
+#ifdef Q_OS_WIN
+    const HWND hwnd = static_cast<HWND>(m_hwnd);
+    const UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 96;
+    const int frame = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi);
+    const int padded = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    return (frame + padded) / devicePixelRatio();
+#else
+    return 8;
+#endif
+}
+
+// 非 Windows 平台没有 WM_NCHITTEST，这里通过窗口级鼠标事件过滤，把
+// dragRegion / 窗口边缘映射为 startSystemMove / startSystemResize，由
+// 窗口管理器接管后续的移动与缩放，从而获得原生窗口行为。
+// 在 Windows 上这段逻辑是休眠的：命中区域由 nativeEvent 返回
+// HTCAPTION/HTMINBUTTON 等非客户区命中码，Qt 不会收到这些位置的鼠标事件。
+bool FramelessWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched != this)
+        return QQuickWindow::eventFilter(watched, event);
+
+    switch (event->type()) {
+    case QEvent::MouseButtonPress: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        m_moveArmed = false;
+        m_resizeArmed = false;
+        m_interactionStarted = false;
+        m_pressPos = me->position();
+
+        if (me->button() != Qt::LeftButton)
+            break;
+
+        if (m_resizeEnabled && !(windowStates() & Qt::WindowMaximized)) {
+            m_resizeEdges = resizeEdgesAt(m_pressPos, size(), effectiveResizeBorderWidth());
+            if (m_resizeEdges) {
+                m_resizeArmed = true;
+                // Wayland 的 xdg_toplevel.resize 必须携带按下事件的 serial，
+                // 因此要趁 press 还在处理时立即发起，拖到 move 里 serial 已失效
+                const bool ok = startSystemResize(m_resizeEdges);
+                qWarning() << "[FLW] press at edge" << m_pressPos << "edges" << m_resizeEdges
+                           << "startSystemResize ->" << ok;
+                if (ok) {
+                    m_interactionStarted = true;
+                    return true;
+                }
+                break;
+            }
+        }
+
+        const PointClassification c = classifyPoint(contentItem(), m_pressPos);
+        m_moveArmed = c.overDrag && !c.overButton && !c.overClient;
+        break;
+    }
+
+    case QEvent::MouseMove: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->buttons().testFlag(Qt::LeftButton))
+            updateWindowCursor(me->position());
+        if (m_interactionStarted || !me->buttons().testFlag(Qt::LeftButton))
+            break;
+
+        if (m_resizeArmed) {
+            m_interactionStarted = true;
+            const bool ok = startSystemResize(m_resizeEdges);
+            qWarning() << "[FLW] move startSystemResize ->" << ok;
+            if (ok)
+                return true;
+        }
+
+        if (m_moveArmed
+            && (me->position() - m_pressPos).manhattanLength() > 4) {
+            m_interactionStarted = true;
+            const bool ok = startSystemMove();
+            qWarning() << "[FLW] startSystemMove ->" << ok;
+            if (ok)
+                return true;
+        }
+        break;
+    }
+
+    case QEvent::HoverMove: {
+        auto *he = static_cast<QHoverEvent *>(event);
+        if (!m_interactionStarted)
+            updateWindowCursor(he->position());
+        break;
+    }
+
+    case QEvent::HoverLeave:
+        unsetCursor();
+        break;
+
+    case QEvent::MouseButtonDblClick: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton) {
+            const PointClassification c = classifyPoint(contentItem(), me->position());
+            if (c.overDrag && !c.overButton && !c.overClient)
+                toggleMaximize();
+        }
+        break;
+    }
+
+    case QEvent::MouseButtonRelease:
+        m_moveArmed = false;
+        m_resizeArmed = false;
+        m_interactionStarted = false;
+        break;
+
+    default:
+        break;
+    }
+
+    return QQuickWindow::eventFilter(watched, event);
+}
+
+void FramelessWindow::updateWindowCursor(const QPointF &pos)
+{
+    if (!m_resizeEnabled || (windowStates() & Qt::WindowMaximized)) {
+        unsetCursor();
+        return;
+    }
+
+    const Qt::Edges edges = resizeEdgesAt(pos, size(), effectiveResizeBorderWidth());
+    const bool horizontal = edges.testFlag(Qt::LeftEdge) || edges.testFlag(Qt::RightEdge);
+    const bool vertical = edges.testFlag(Qt::TopEdge) || edges.testFlag(Qt::BottomEdge);
+
+    Qt::CursorShape shape = Qt::ArrowCursor;
+    if (horizontal && vertical) {
+        const bool forward = edges == (Qt::TopEdge | Qt::LeftEdge)
+                             || edges == (Qt::BottomEdge | Qt::RightEdge);
+        shape = forward ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor;
+    } else if (horizontal) {
+        shape = Qt::SizeHorCursor;
+    } else if (vertical) {
+        shape = Qt::SizeVerCursor;
+    }
+
+    if (shape == Qt::ArrowCursor)
+        unsetCursor();
+    else
+        setCursor(shape);
+}
+
 #ifdef Q_OS_WIN
 
 void FramelessWindow::applyNativeChrome()
@@ -273,18 +482,6 @@ void FramelessWindow::rebuildRegions()
         for (QQuickItem *child : children)
             stack.append(child);
     }
-}
-
-qreal FramelessWindow::effectiveResizeBorderWidth()
-{
-    if (m_resizeBorderWidth >= 0)
-        return m_resizeBorderWidth;
-
-    const HWND hwnd = static_cast<HWND>(m_hwnd);
-    const UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 96;
-    const int frame = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi);
-    const int padded = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-    return (frame + padded) / devicePixelRatio();
 }
 
 static QPointF toLocalDip(QWindow *window, HWND hwnd, const QPoint &screenPos)

@@ -8,11 +8,24 @@ Rectangle {
     implicitHeight: 32
     color: "#14161C"
 
+    // Linux 上窗口背景透明，标题栏自带顶部圆角；底部的圆角用同色矩形盖住
+    property real cornerRadius: 0
+    radius: cornerRadius
+
     property string title: ""
     property color titleColor: "#9AA0AC"
     property alias titleItem: titleLabel
 
     default property alias controls: controlRow.data
+
+    Rectangle {
+        visible: root.cornerRadius > 0
+        anchors.left: root.left
+        anchors.right: root.right
+        anchors.bottom: root.bottom
+        height: root.height / 2
+        color: root.color
+    }
 
     Text {
         id: titleLabel

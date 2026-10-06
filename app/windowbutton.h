@@ -40,6 +40,13 @@ signals:
 
     void clicked();
 
+protected:
+    void hoverEnterEvent(QHoverEvent *event) override;
+    void hoverLeaveEvent(QHoverEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseUngrabEvent() override;
+
 private:
     Role m_role = Minimize;
     bool m_hovered = false;
