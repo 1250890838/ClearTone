@@ -55,4 +55,4 @@ private:
     Private *d = nullptr;
 };
 
-#endif // HTTPREPLY_H
+#endif

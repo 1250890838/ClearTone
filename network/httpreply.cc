@@ -19,8 +19,6 @@
 #include <QSaveFile>
 #include <QTimer>
 
-#include <chrono>
-
 namespace {
 
 constexpr int kMaxBackoffMs = 8000;
@@ -50,7 +48,6 @@ NetworkError::Kind transportKind(QNetworkReply::NetworkError code)
     }
 }
 
-// 只有这些算「换个时机可能就好了」。SSL 握手失败重试基本没用，不列入。
 bool isRetriableKind(NetworkError::Kind kind)
 {
     switch (kind) {
@@ -64,8 +61,6 @@ bool isRetriableKind(NetworkError::Kind kind)
     }
 }
 
-// 后端错误体没有统一标准，这里兼容最常见的几种：
-//   {"message": "...", "code": "..."} / {"error": {"message": ..., "code": ...}} / {"error": "..."}
 void fillFromErrorBody(NetworkError &error, const QByteArray &body)
 {
     if (body.isEmpty())
@@ -98,7 +93,7 @@ void fillFromErrorBody(NetworkError &error, const QByteArray &body)
         error.serverCode = nested.value(QStringLiteral("code")).toString();
 }
 
-} // namespace
+}
 
 struct HttpReply::Private
 {
@@ -116,6 +111,9 @@ struct HttpReply::Private
     int maxAttempts = 1;
     int backoffMs = 300;
     int timeoutMs = 0;
+
+    qint64 receivedBytes = 0;
+    qint64 totalBytes = -1;
 
     bool finished = false;
     bool autoDelete = true;
@@ -218,8 +216,6 @@ void HttpReply::cancel()
         d->networkReply.clear();
     }
 
-    // 上面已经断开了连接，onNetworkReplyFinished 不会再跑，错误映射得在这里补上，
-    // 否则调用方拿到的是一个「没错误、没状态码」的空响应。
     d->response.error.kind = NetworkError::Kind::Cancelled;
     d->response.error.message = QStringLiteral("request cancelled by caller");
 
@@ -233,14 +229,20 @@ QUrl HttpReply::url() const
 
 qint64 HttpReply::bytesReceived() const
 {
-    return d->networkReply ? d->networkReply->bytesAvailable() : 0;
+    return d->receivedBytes;
 }
 
 qint64 HttpReply::bytesTotal() const
 {
-    return d->networkReply
-        ? d->networkReply->header(QNetworkRequest::ContentLengthHeader).toLongLong()
-        : -1;
+    if (d->totalBytes >= 0)
+        return d->totalBytes;
+    if (d->networkReply) {
+        const qint64 length =
+            d->networkReply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+        if (length > 0)
+            return length;
+    }
+    return -1;
 }
 
 QString HttpReply::savedFilePath() const
@@ -262,8 +264,6 @@ bool HttpReply::autoDelete() const
 {
     return d->autoDelete;
 }
-
-// ——— 转发到 HttpClient 的私有实现 ————————————————————————————————
 
 QUrl HttpReply::buildUrlForRequest() const
 {
@@ -295,8 +295,6 @@ QNetworkAccessManager *HttpReply::networkAccessManagerForRequest() const
     return d->client->ensureNetworkAccessManager();
 }
 
-// ——— Private ————————————————————————————————————————————————
-
 void HttpReply::Private::restartInactivityTimer()
 {
     if (timeoutMs <= 0) {
@@ -312,7 +310,7 @@ void HttpReply::Private::restartInactivityTimer()
             aborted = true;
             abortReason = NetworkError::Kind::Timeout;
             if (networkReply)
-                networkReply->abort();   // 同步触发 finished()，交给 onNetworkReplyFinished
+                networkReply->abort();
             else
                 finish();
         });
@@ -344,6 +342,8 @@ void HttpReply::Private::startAttempt()
     aborted = false;
     response = HttpResponse{};
     elapsed.start();
+    receivedBytes = 0;
+    totalBytes = -1;
 
     delete saveFile;
     saveFile = nullptr;
@@ -374,14 +374,16 @@ void HttpReply::Private::startAttempt()
     response.requestUrl = url;
 
     QNetworkRequest networkRequest(url);
-    if (timeoutMs > 0)
-        networkRequest.setTransferTimeout(std::chrono::milliseconds(timeoutMs));
 
     const QVariantMap headers = q->mergedHeadersForRequest();
+    bool hasContentTypeHeader = false;
     for (auto it = headers.constBegin(); it != headers.constEnd(); ++it) {
-        if (it.key().compare(QLatin1String("Content-Type"), Qt::CaseInsensitive) == 0)
-            continue;
-        networkRequest.setRawHeader(it.key().toUtf8(), it.value().toString().toUtf8());
+        if (it.key().compare(QLatin1String("Content-Type"), Qt::CaseInsensitive) == 0) {
+            hasContentTypeHeader = true;
+            networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, it.value().toString());
+        } else {
+            networkRequest.setRawHeader(it.key().toUtf8(), it.value().toString().toUtf8());
+        }
     }
 
     QNetworkReply *reply = nullptr;
@@ -397,7 +399,7 @@ void HttpReply::Private::startAttempt()
             multiPart->append(part);
         }
 
-        auto *file = new QFile(request.uploadFilePath, multiPart);   // 由 multiPart 负责释放
+        auto *file = new QFile(request.uploadFilePath, multiPart);
         if (!file->open(QIODevice::ReadOnly)) {
             const QString reason = file->errorString();
             delete multiPart;
@@ -432,23 +434,26 @@ void HttpReply::Private::startAttempt()
             reply = manager->head(networkRequest);
             break;
         case HttpRequest::Method::Post:
-            networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
+            if (!hasContentTypeHeader)
+                networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
             reply = manager->post(networkRequest, request.body);
             break;
         case HttpRequest::Method::Put:
-            networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
+            if (!hasContentTypeHeader)
+                networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
             reply = manager->put(networkRequest, request.body);
             break;
         case HttpRequest::Method::Patch:
-            networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
+            if (!hasContentTypeHeader)
+                networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
             reply = manager->sendCustomRequest(networkRequest, QByteArrayLiteral("PATCH"), request.body);
             break;
         case HttpRequest::Method::Delete:
-            // QNAM 没有带 body 的 deleteResource 重载，有 body 时只能走 sendCustomRequest
             if (request.body.isEmpty()) {
                 reply = manager->deleteResource(networkRequest);
             } else {
-                networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
+                if (!hasContentTypeHeader)
+                    networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, request.contentType);
                 reply = manager->sendCustomRequest(networkRequest, QByteArrayLiteral("DELETE"), request.body);
             }
             break;
@@ -467,6 +472,9 @@ void HttpReply::Private::startAttempt()
     connect(reply, &QNetworkReply::finished, q, [this] { onNetworkReplyFinished(); });
     connect(reply, &QNetworkReply::readyRead, q, [this] { drainToSaveFile(); });
     connect(reply, &QNetworkReply::downloadProgress, q, [this](qint64 received, qint64 total) {
+        receivedBytes = received;
+        if (total >= 0)
+            totalBytes = total;
         restartInactivityTimer();
         emit q->downloadProgress(received, total);
     });

@@ -9,4 +9,4 @@
 #define NETWORK_EXPORT Q_DECL_IMPORT
 #endif
 
-#endif // NETWORK_GLOBAL_H
+#endif

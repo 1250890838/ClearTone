@@ -40,4 +40,4 @@ public:
 
 Q_DECLARE_METATYPE(HttpRequest)
 
-#endif // HTTPREQUEST_H
+#endif

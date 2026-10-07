@@ -41,4 +41,4 @@ public:
 
 Q_DECLARE_METATYPE(HttpResponse)
 
-#endif // HTTPRESPONSE_H
+#endif

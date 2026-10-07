@@ -21,7 +21,7 @@ QString kindName(NetworkError::Kind kind)
     return QStringLiteral("未知错误");
 }
 
-} // namespace
+}
 
 QString NetworkError::toString() const
 {

@@ -75,4 +75,4 @@ private:
     Private *d = nullptr;
 };
 
-#endif // HTTPCLIENT_H
+#endif
