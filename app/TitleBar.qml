@@ -8,7 +8,6 @@ Rectangle {
     implicitHeight: 32
     color: "#14161C"
 
-    // Linux 上窗口背景透明，标题栏自带顶部圆角；底部的圆角用同色矩形盖住
     property real cornerRadius: 0
     radius: cornerRadius
 

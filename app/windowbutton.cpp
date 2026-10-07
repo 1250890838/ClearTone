@@ -54,8 +54,6 @@ void WindowButton::emitClicked()
     emit clicked();
 }
 
-// Windows 上按钮区域由 FramelessWindow 的非客户区命中测试接管，Qt 不会
-// 在这里投递鼠标事件，以下实现仅在非 Windows 平台生效。
 void WindowButton::hoverEnterEvent(QHoverEvent *event)
 {
     setHovered(true);

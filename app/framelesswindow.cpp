@@ -2,7 +2,6 @@
 #include "windowbutton.h"
 
 #include <QEvent>
-#include <QHoverEvent>
 #include <QMouseEvent>
 #include <QQuickItem>
 #include <QTimer>
@@ -276,11 +275,6 @@ qreal FramelessWindow::effectiveResizeBorderWidth()
 #endif
 }
 
-// 非 Windows 平台没有 WM_NCHITTEST，这里通过窗口级鼠标事件过滤，把
-// dragRegion / 窗口边缘映射为 startSystemMove / startSystemResize，由
-// 窗口管理器接管后续的移动与缩放，从而获得原生窗口行为。
-// 在 Windows 上这段逻辑是休眠的：命中区域由 nativeEvent 返回
-// HTCAPTION/HTMINBUTTON 等非客户区命中码，Qt 不会收到这些位置的鼠标事件。
 bool FramelessWindow::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched != this)
@@ -301,12 +295,7 @@ bool FramelessWindow::eventFilter(QObject *watched, QEvent *event)
             m_resizeEdges = resizeEdgesAt(m_pressPos, size(), effectiveResizeBorderWidth());
             if (m_resizeEdges) {
                 m_resizeArmed = true;
-                // Wayland 的 xdg_toplevel.resize 必须携带按下事件的 serial，
-                // 因此要趁 press 还在处理时立即发起，拖到 move 里 serial 已失效
-                const bool ok = startSystemResize(m_resizeEdges);
-                qWarning() << "[FLW] press at edge" << m_pressPos << "edges" << m_resizeEdges
-                           << "startSystemResize ->" << ok;
-                if (ok) {
+                if (startSystemResize(m_resizeEdges)) {
                     m_interactionStarted = true;
                     return true;
                 }
@@ -321,40 +310,34 @@ bool FramelessWindow::eventFilter(QObject *watched, QEvent *event)
 
     case QEvent::MouseMove: {
         auto *me = static_cast<QMouseEvent *>(event);
-        if (me->buttons().testFlag(Qt::LeftButton))
+        if (!m_interactionStarted)
             updateWindowCursor(me->position());
         if (m_interactionStarted || !me->buttons().testFlag(Qt::LeftButton))
             break;
 
         if (m_resizeArmed) {
             m_interactionStarted = true;
-            const bool ok = startSystemResize(m_resizeEdges);
-            qWarning() << "[FLW] move startSystemResize ->" << ok;
-            if (ok)
+            if (startSystemResize(m_resizeEdges))
                 return true;
         }
 
         if (m_moveArmed
             && (me->position() - m_pressPos).manhattanLength() > 4) {
             m_interactionStarted = true;
-            const bool ok = startSystemMove();
-            qWarning() << "[FLW] startSystemMove ->" << ok;
-            if (ok)
+            if (startSystemMove())
                 return true;
         }
         break;
     }
 
-    case QEvent::HoverMove: {
-        auto *he = static_cast<QHoverEvent *>(event);
-        if (!m_interactionStarted)
-            updateWindowCursor(he->position());
+    case QEvent::MouseButtonRelease: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        m_moveArmed = false;
+        m_resizeArmed = false;
+        m_interactionStarted = false;
+        updateWindowCursor(me->position());
         break;
     }
-
-    case QEvent::HoverLeave:
-        unsetCursor();
-        break;
 
     case QEvent::MouseButtonDblClick: {
         auto *me = static_cast<QMouseEvent *>(event);
@@ -365,12 +348,6 @@ bool FramelessWindow::eventFilter(QObject *watched, QEvent *event)
         }
         break;
     }
-
-    case QEvent::MouseButtonRelease:
-        m_moveArmed = false;
-        m_resizeArmed = false;
-        m_interactionStarted = false;
-        break;
 
     default:
         break;

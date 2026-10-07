@@ -10,7 +10,6 @@ FramelessWindow {
     minimumHeight: 320
     visible: true
     title: qsTr("ClearTone")
-    // Linux：窗口本体透明，由标题栏 + 内容区自绘圆角；Windows：DWM 负责圆角
     color: Theme.frameRadius > 0 && !window.maximized ? "transparent" : "#0B0C10"
 
     TitleBar {
